@@ -1,7 +1,7 @@
 # Payment Gateway API
  An online payment solution utilizing PayGate
 
-### Why this?
+## Purpose
 ```
 You may find that a popular payment provider such as Stripe is not supported in your country. Therefore you may need to implement your own solution which interacts with a viable payment provider's system.
 ```
