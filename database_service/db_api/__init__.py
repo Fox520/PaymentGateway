@@ -16,6 +16,7 @@ def index():
 
 api.add_resource(DatabaseEndpoint, "/cancel-order", endpoint="/cancel-order")
 api.add_resource(DatabaseEndpoint, "/complete-order", endpoint="/complete-order")
+api.add_resource(DatabaseEndpoint, "/is-order-complete", endpoint="/is-order-complete")
 api.add_resource(DatabaseEndpoint, "/order-cost", endpoint="/order-cost")
 api.add_resource(DatabaseEndpoint, "/order-history", endpoint="/order-history")
 api.add_resource(DatabaseEndpoint, "/create-order", endpoint="/create-order")

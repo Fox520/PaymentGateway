@@ -1,20 +1,17 @@
-import ballerina/crypto;
 import ballerina/http;
-import ballerina/java;
-import ballerina/log;
-import ballerina/stringutils;
 import ballerina/time;
+import ballerina/java;
+import ballerina/crypto;
+import ballerina/stringutils;
 
 http:Client databaseEP = new ("http://localhost:6001");
-
 http:Client paywebEP = new ("https://secure.paygate.co.za/payweb3");
 
-string notify_url = "https://a59489fa1164.ngrok.io/notify";
-string return_url = "https://a59489fa1164.ngrok.io/transaction-callback";
+string notify_url = "https://c73e12ff8ac1.ngrok.io/notify";
+string return_url = "https://c73e12ff8ac1.ngrok.io/transaction-callback";
 
 string PAYGATE_ID = "10011072130";
 string PASSWORD = "secret";
-
 
 const map<string> TRANSACTION_STATUS = {
     "0": "Not Done",
@@ -30,26 +27,17 @@ const map<string> TRANSACTION_STATUS = {
 @http:ServiceConfig {
     basePath: "/"
 }
-service sprinkle on new http:Listener(9090, {httpVersion: "2.0"}) {
-
-    @http:ResourceConfig {
-        methods: ["GET"],
-        path: "/order-history/{uid}"
-    }
-    resource function orderHistory(http:Caller caller, http:Request request, string uid) returns @tainted error? {
-        http:Response result = check databaseEP->get("/order-history?uid=" + <@untainted>uid);
-        json converted = check result.getJsonPayload();
-        check caller->respond(<@untainted>converted);
-    }
+service sprinkle on new http:Listener(9090) {
 
     @http:ResourceConfig {
         methods: ["POST"],
         path: "/create-order"
     }
-    resource function createOrder(http:Caller caller, http:Request request) returns @tainted error? {
-        // Writes order items to db
-        http:Response createOrderResponse = check databaseEP->post("/create-order", <@untainted>request);
-        check caller->respond(check <@untainted>createOrderResponse.getTextPayload());
+    resource function createOrder(http:Caller caller, http:Request request) returns @tainted error?{
+        http:Response  createOrderResponse = check databaseEP->post("/create-order", <@untainted>request);
+        string payload = check createOrderResponse.getTextPayload();
+        var x = caller->respond(<@untainted>payload);
+        
     }
 
     @http:ResourceConfig {
@@ -61,16 +49,16 @@ service sprinkle on new http:Listener(9090, {httpVersion: "2.0"}) {
         json paramsRaw = check request.getJsonPayload();
         map<string> params = check map<string>.constructFrom(paramsRaw);
 
-        // Writes order items to db
-        http:Response orderCostResponse = check databaseEP->get("/order-cost?uid=" + <@untainted>params.get("uid"));
-
+        string uid = <@untainted>params.get("uid");
+        // Calculate cost on backend
+        http:Response orderCostResponse = check databaseEP->get("/order-cost?uid=" + uid);
         string cost = check orderCostResponse.getTextPayload();
 
-        string uid = <@untainted>params.get("uid");
+        // A unique value to identify a transaction.
+        // Can be used by the client application to determine if the order was completed or not
+        handle uuid = createRandomUUID();
 
         string datetime = check time:format(time:currentTime(), "yyyy-MM-dd HH:mm:ss");
-        // Use on client to determine if order was completed or not
-        handle uuid = createRandomUUID();
         // Initiate transaction on PayGate
         map<string> data = {
             "PAYGATE_ID": PAYGATE_ID,
@@ -86,34 +74,33 @@ service sprinkle on new http:Listener(9090, {httpVersion: "2.0"}) {
             "NOTIFY_URL": notify_url,
             "USER1": uuid.toString()
         };
-
         data["CHECKSUM"] = generateChecksum(data);
         http:Request initiateRequest = new;
         initiateRequest.setTextPayload(<@untainted>mapToForm(data));
         check initiateRequest.setContentType("application/x-www-form-urlencoded");
-
+        
         // Initiate transaction
         var x = paywebEP->post("/initiate.trans", initiateRequest);
         if (x is http:Response) {
             string resultRaw = check x.getTextPayload();
-            // Note: checksum we receive is different from the one we generate.
+            // Convert form data to map
             map<string> resultsFormatted = formToMap(resultRaw);
-            log:printInfo(resultsFormatted.toString());
+
             if (resultsFormatted.hasKey("ERROR")) {
+                // For meaning, see https://docs.paygate.co.za/#error-codes
                 _ = check caller->respond(resultsFormatted.get("ERROR"));
                 return;
             }
 
             // Save transaction details to db
-
             _ = check databaseEP->post("/initiate-order", {
                     "uid": uid,
                     "data": resultsFormatted
                 }
             );
-
-            // Return html form with auto submit to redirect
-            // https://docs.paygate.co.za/#redirect
+            // Return html form with auto submit which redirects client to the payment gateway
+            // See https://docs.paygate.co.za/#redirect
+            // Note: Checksum we receive from PayGate is different from the one we generate.
             string msg = string `
         <html>
             <body onLoad="submitMyForm()">
@@ -131,26 +118,23 @@ service sprinkle on new http:Listener(9090, {httpVersion: "2.0"}) {
             </body>
         </html>
                         `;
+            
+            http:Response clientResponse = new;
             map<string> ss = {
-                // On app resume, check if completed_orders/{uid}/order_history/{collections}/extra.USER1 == below
                 "transaction_ref": uuid.toString(),
                 "data": msg
             };
-            http:Response clientResponse = new;
             clientResponse.setPayload(ss);
             clientResponse.setContentType("application/json");
 
             var res = caller->respond(clientResponse);
-
+            // In case client gets disconnectd, cancel this initiated transaction
             if (res is error) {
                 _ = check databaseEP->get("/cancel-initiate?uid=" + uid);
             }
-        } else {
+        }else{
             panic x;
         }
-
-        check caller->ok();
-
     }
 
     @http:ResourceConfig {
@@ -158,6 +142,7 @@ service sprinkle on new http:Listener(9090, {httpVersion: "2.0"}) {
         path: "/transaction-callback"
     }
     resource function transactionCallback(http:Caller caller, http:Request request) returns @tainted error? {
+        // PayGate sends the data as form so convert it to map
         map<string> data = formToMap(check request.getTextPayload());
         string transaction_status = TRANSACTION_STATUS.get(<@untainted>data.get("TRANSACTION_STATUS"));
 
@@ -169,11 +154,12 @@ service sprinkle on new http:Listener(9090, {httpVersion: "2.0"}) {
         <body>
         </html>
         `;
-
         http:Response clientResponse = new;
         clientResponse.setPayload(msg);
         clientResponse.setContentType("text/html");
+
         _ = check caller->respond(clientResponse);
+    
     }
 
     @http:ResourceConfig {
@@ -182,23 +168,44 @@ service sprinkle on new http:Listener(9090, {httpVersion: "2.0"}) {
     }
     resource function notifyCallback(http:Caller caller, http:Request request) returns @tainted error? {
         map<string> data = formToMap(check request.getTextPayload());
+        // Check if transaction was successful
+        // https://docs.paygate.co.za/#frequently-asked-questions
         if (data.get("TRANSACTION_STATUS") == "1" && data.get("RESULT_CODE") == "990017") {
-            // Transaction is successful
             string uid = <@untainted>data.get("REFERENCE");
+            // Remove what you don't want written to database
             _ = data.removeIfHasKey("REFERENCE");
             _ = data.removeIfHasKey("PAYGATE_ID");
             json dd = check json.constructFrom(data);
+
+            http:Request req = new;
             map<json> reqData = {
                 "uid": uid,
                 "data": dd
             };
-            http:Request req = new;
             req.setPayload(reqData);
+            // Delete pending order and mark as complete
             _ = check databaseEP->post("/complete-order", req);
         }
         _ = check caller->ok();
+    
+    }
+
+    @http:ResourceConfig {
+        methods: ["GET"],
+        path: "/is-order-complete/{uid}/{order_id}"
+    }
+    resource function isOrderComplete(http:Caller caller, http:Request request, string uid, string order_id)returns @tainted error?{
+        string _uid = <@untainted> uid;
+        string _order_id = <@untainted> order_id;
+        http:Response  createOrderResponse = check databaseEP->get(string `/is-order-complete?uid=${_uid}&order-id=${_order_id}`);
+        string payload = check createOrderResponse.getTextPayload();
+        var x = caller->respond(<@untainted>payload);
     }
 }
+
+
+
+
 
 
 function formToMap(string form) returns map<string> {
@@ -212,6 +219,7 @@ function formToMap(string form) returns map<string> {
     return returnMap;
 }
 
+
 function mapToForm(map<string> data) returns string {
     string temp_string = "";
 
@@ -220,6 +228,7 @@ function mapToForm(map<string> data) returns string {
     }
     return temp_string;
 }
+
 
 function generateChecksum(map<string> data) returns string {
     string temp_string = "";
@@ -232,6 +241,7 @@ function generateChecksum(map<string> data) returns string {
     return x.toBase16();
 
 }
+
 
 function createRandomUUID() returns handle = @java:Method {
     name: "randomUUID",

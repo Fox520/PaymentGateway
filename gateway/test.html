@@ -1,0 +1,15 @@
+<html>
+            <body onLoad="submitMyForm()">
+
+                <form id="myForm" action="https://secure.paygate.co.za/payweb3/process.trans" method="POST" >
+                    <input type="hidden" name="PAY_REQUEST_ID" value="C701B196-DF40-9E23-4826-5CE0B716D3B9">
+                    <input type="hidden" name="CHECKSUM" value="a20560fbb032f9b08ddbad9a227f35ef">
+                </form>
+
+            <script>
+                function submitMyForm(){
+                    document.getElementById("myForm").submit();
+                }
+            </script>
+            </body>
+        </html>

@@ -1,7 +1,7 @@
 import os
 import datetime
 
-os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8081"
+# os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8081"
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -100,23 +100,25 @@ class FBDatabase:
             {"name": "Pants", "price": 20,}
         )
 
-        self.db.collection("pending_orders").document(uid).set(
-            {
-                "details": firestore.ArrayUnion(
-                    [
-                        {"product_id": "prd1", "count": 2},
-                        {"product_id": "prd2", "count": 4},
-                    ]
-                )
-            }
-        )
-
-        # self.db.batch(self.db.collection("orders").document(uid), [{"product_id": "prd1", "count": 2}])
+        # self.db.collection("pending_orders").document(uid).set(
+        #     {
+        #         "details": firestore.ArrayUnion(
+        #             [
+        #                 {"product_id": "prd1", "count": 2},
+        #                 {"product_id": "prd2", "count": 4},
+        #             ]
+        #         )
+        #     }
+        # )
+    
+    def is_order_complete(self, uid, ii):
+        return len(self.db.collection("completed_orders").document(uid).collection("order_history").where("extra.USER1", "==", ii).get()) == 1
 
 
 database = FBDatabase()
 if 0:
-    database._fill_db("user1")
+    print(database.is_order_complete("user1", "9116dfff-373b-45be-a53d-735f8f3eff76"))
+    # database._fill_db("user1")
     # database.complete_order("user1")
 
 # database.get_orders("user1")

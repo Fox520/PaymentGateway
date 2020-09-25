@@ -23,6 +23,8 @@ class DatabaseEndpoint(Resource):
                 return str(database.get_order_cost(uid))
             elif "/order-history" in request.path:
                 return database.get_orders(uid)
+            elif "/is-order-complete" in request.path:
+                return database.is_order_complete(uid, request.args["order-id"])
 
         except:
             print(traceback.format_exc())
